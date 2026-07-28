@@ -12,6 +12,8 @@
     category: "all",
     brand: "all",
     sort: "date-desc",
+    startDate: "",
+    endDate: "",
   };
   // Some file previews block localStorage. Keep a session fallback so edits
   // still survive the re-render that follows Save.
@@ -110,7 +112,13 @@
     return { sales: sum(items, "salesAmount"), purchase, gross: sum(items, "grossMarginAmount"), rate: purchase ? sum(items, "grossMarginAmount") / purchase : 0, futureCollections, incomplete: items.filter((item) => item.salesAmount === null || item.purchaseAmount === null) };
   }
   function filteredSales() {
-    let items = allSales().filter((item) => { const q = state.search.toLocaleLowerCase("tr-TR"); const textMatch = !q || [item.customer, item.brand, item.category, item.month].join(" ").toLocaleLowerCase("tr-TR").includes(q); return textMatch && (state.month === "all" || item.month === state.month) && (state.category === "all" || item.category === state.category) && (state.brand === "all" || item.brand === state.brand); });
+    let items = allSales().filter((item) => {
+      const q = state.search.toLocaleLowerCase("tr-TR");
+      const textMatch = !q || [item.customer, item.brand, item.category, item.month].join(" ").toLocaleLowerCase("tr-TR").includes(q);
+      const dateMatch = (!state.startDate || String(item.invoiceDate ?? "") >= state.startDate) && (!state.endDate || String(item.invoiceDate ?? "") <= state.endDate);
+      const monthMatch = state.month === "all" || item.month === state.month;
+      return textMatch && dateMatch && monthMatch && (state.category === "all" || item.category === state.category) && (state.brand === "all" || item.brand === state.brand);
+    });
     items.sort((a, b) => state.sort === "sales-desc" ? num(b.salesAmount) - num(a.salesAmount) : state.sort === "margin-desc" ? num(b.grossMarginAmount) - num(a.grossMarginAmount) : String(b.invoiceDate ?? "").localeCompare(String(a.invoiceDate ?? "")));
     return items;
   }
@@ -158,11 +166,11 @@
   function rankingTable(items) { const max = items[0]?.sales || 1; return `<div class="ranking-list">${items.slice(0, 20).map((item, index) => `<div class="ranking-row"><div class="ranking-number">${String(index + 1).padStart(2, "0")}</div><div class="ranking-main"><div class="ranking-name">${escapeHtml(item.name)}</div><div class="progress"><span style="width:${item.sales / max * 100}%"></span></div><div class="focus-sub">${item.count} işlem · marj ${money(item.gross)}</div></div><div class="ranking-value">${compactMoney(item.sales)}</div></div>`).join("")}</div>`; }
   function filterBar() {
     const available = monthOrder.filter((month) => allSales().some((item) => item.month === month));
-    return `<div class="filter-bar"><select class="filter-select month-select" data-filter="month">${available.map((month) => `<option value="${month}" ${state.month === month ? "selected" : ""}>${month} 2026</option>`).join("")}</select><input class="field search-field" data-filter="search" placeholder="Müşteri, etiket veya kategori ara…" value="${escapeHtml(state.search)}"/><select class="filter-select" data-filter="category">${options(uniqueValues("category"), state.category, "Tüm kategoriler")}</select><select class="filter-select" data-filter="brand">${options(uniqueValues("brand"), state.brand, "Tüm etiketler")}</select><select class="filter-select" data-filter="sort"><option value="date-desc" ${state.sort === "date-desc" ? "selected" : ""}>En yeni</option><option value="sales-desc" ${state.sort === "sales-desc" ? "selected" : ""}>Satış tutarı</option><option value="margin-desc" ${state.sort === "margin-desc" ? "selected" : ""}>Brüt kâr</option></select></div>`;
+    return `<div class="filter-bar"><select class="filter-select month-select" data-filter="month"><option value="all" ${state.month === "all" ? "selected" : ""}>Tüm aylar</option>${available.map((month) => `<option value="${month}" ${state.month === month ? "selected" : ""}>${month} 2026</option>`).join("")}</select><input class="field date-filter" type="date" data-filter="startDate" aria-label="Başlangıç tarihi" title="Fatura tarihine göre başlangıç" value="${escapeHtml(state.startDate)}"/><input class="field date-filter" type="date" data-filter="endDate" aria-label="Bitiş tarihi" title="Fatura tarihine göre bitiş" value="${escapeHtml(state.endDate)}"/><input class="field search-field" data-filter="search" placeholder="Müşteri, etiket veya kategori ara…" value="${escapeHtml(state.search)}"/><select class="filter-select" data-filter="category">${options(uniqueValues("category"), state.category, "Tüm kategoriler")}</select><select class="filter-select" data-filter="brand">${options(uniqueValues("brand"), state.brand, "Tüm etiketler")}</select><select class="filter-select" data-filter="sort"><option value="date-desc" ${state.sort === "date-desc" ? "selected" : ""}>En yeni</option><option value="sales-desc" ${state.sort === "sales-desc" ? "selected" : ""}>Satış tutarı</option><option value="margin-desc" ${state.sort === "margin-desc" ? "selected" : ""}>Brüt kâr</option></select></div>`;
   }
   function salesView() {
     const available = monthOrder.filter((month) => allSales().some((item) => item.month === month));
-    if (!available.includes(state.month)) state.month = available[available.length - 1] || "Temmuz";
+    if (state.month !== "all" && !available.includes(state.month)) state.month = available[available.length - 1] || "Temmuz";
     const items = filteredSales(), m = metrics(items);
     const tabs = [["transactions", "Satış kayıtları"], ["customers", "Müşteriler"], ["brands", "Etiketler"]];
     const body = state.salesTab === "customers" ? rankingTable(grouped(items, "customer")) : state.salesTab === "brands" ? rankingTable(grouped(items, "brand")) : salesTable(items);
@@ -253,7 +261,7 @@
     if (type === "export-monthly-xlsx") exportMonthlyXlsx();
     if (type === "clear-local") { if (!confirm("Tüm yerel düzenleme, silme ve yeni kayıtlar sıfırlansın mı?")) return; ["faz1_overrides", "faz1_deleted", "faz1_custom"].forEach((key) => { memoryStorage.delete(key); try { localStorage.removeItem(key); } catch { /* storage may be blocked */ } }); window.pushCloudState?.(cloudState()); render(); showToast("Yerel ve bulut değişiklikleri sıfırlandı."); }
   });
-  document.addEventListener("change", (event) => { const filter = event.target.closest("[data-filter]"); if (!filter) return; const key = filter.dataset.filter; if (key === "month") state.month = filter.value; if (key === "category") state.category = filter.value; if (key === "brand") state.brand = filter.value; if (key === "sort") state.sort = filter.value; render(); });
+  document.addEventListener("change", (event) => { const filter = event.target.closest("[data-filter]"); if (!filter) return; const key = filter.dataset.filter; if (key === "month") state.month = filter.value; if (key === "category") state.category = filter.value; if (key === "brand") state.brand = filter.value; if (key === "sort") state.sort = filter.value; if (key === "startDate") state.startDate = filter.value; if (key === "endDate") state.endDate = filter.value; if ((key === "startDate" || key === "endDate") && filter.value) state.month = "all"; render(); });
   document.addEventListener("input", (event) => { const filter = event.target.closest('[data-filter="search"]'); if (!filter) return; state.search = filter.value; if (state.view === "sales" && state.salesTab === "transactions") { const panel = appView.querySelector(".panel"); if (panel) panel.innerHTML = salesTable(filteredSales()); } });
   document.addEventListener("submit", (event) => { if (event.target.id !== "saleForm") return; event.preventDefault(); const form = new FormData(event.target); saveSale(form); closeModal(); render(); showToast(form.get("id") ? "Satış güncellendi." : "Yeni satış eklendi."); });
   document.getElementById("mobileMenu").addEventListener("click", () => document.getElementById("sidebar").classList.toggle("open"));
