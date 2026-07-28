@@ -1,0 +1,1 @@
+Identifier 'text' has already been declared
