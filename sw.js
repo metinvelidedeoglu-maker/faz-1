@@ -1,4 +1,4 @@
-const CACHE_NAME = "faz1-app-v1";
+const CACHE_NAME = "faz1-app-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -7,8 +7,6 @@ const APP_SHELL = [
   "./app.js",
   "./firebase.js",
   "./manifest.webmanifest",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
 ];
 
 self.addEventListener("install", (event) => {
