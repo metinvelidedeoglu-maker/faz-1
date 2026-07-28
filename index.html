@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0a1020">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>MetinOS · Vensis Yönetim Merkezi</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="auth-gate" id="authGate">
+    <div class="auth-box">
+      <div class="auth-logo">F1</div>
+      <h2>FAZ-1 Satış Sistemi</h2>
+      <p>Satışlarını telefon ve bilgisayarda eşitlemek için kendi Google hesabınla giriş yap.</p>
+      <button class="google-button" id="googleSignInBtn">Google ile giriş yap</button>
+      <div class="auth-error" id="authError"></div>
+    </div>
+  </div>
+
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">V</div>
+        <div>
+          <div class="brand-name">MetinOS</div>
+          <div class="brand-sub">Vensis yönetim merkezi</div>
+        </div>
+      </div>
+      <div class="sidebar-label">FAZ 1 çalışma alanı</div>
+      <nav class="main-nav">
+        <button class="nav-item active" data-view="dashboard"><span class="nav-icon">⌂</span><span>Genel Bakış</span></button>
+        <button class="nav-item" data-view="sales"><span class="nav-icon">↗</span><span>Satış kayıtları</span><span class="nav-count" id="salesCount">0</span></button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="mini-profile">
+          <div class="avatar">M</div>
+          <div><strong>FAZ 1</strong><span>Excel satış tablosu</span></div>
+        </div>
+        <button class="settings-button" data-view="settings"><span>⚙</span> Ayarlar &amp; Veri</button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <button class="mobile-menu" id="mobileMenu" aria-label="Menüyü aç">☰</button>
+        <div class="breadcrumb"><span id="breadcrumbRoot">Genel Bakış</span><span class="crumb-separator">/</span><strong id="breadcrumbCurrent">FAZ 1 satış tablosu</strong></div>
+        <div class="top-actions">
+          <span class="data-status"><i></i><span id="saveStatus">Buluta bağlanıyor</span></span>
+          <button class="cloud-signout" id="signOutBtn" hidden>Çıkış</button>
+          <button class="icon-button" id="quickAdd" title="Hızlı satış ekle">＋</button>
+          <button class="avatar top-avatar">M</button>
+        </div>
+      </header>
+      <div id="appView" class="view-container"></div>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <div class="modal-backdrop hidden" id="modalBackdrop">
+    <div class="modal" id="modal"></div>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+  <script type="module" src="firebase.js"></script>
+</body>
+</html>
