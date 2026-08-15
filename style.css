@@ -168,11 +168,25 @@ h3 { font-size: 13px; margin-bottom: 5px; }
 .col-3 { grid-column: span 3; }
 .full { grid-column: 1 / -1; }
 
-.filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 15px; }
+.filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 15px; position: relative; z-index: 10; }
 .field, .filter-select { border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 9px; padding: 9px 10px; outline: none; font-size: 11px; }
 .field:focus, .filter-select:focus { border-color: #a5bbfa; box-shadow: 0 0 0 3px #eef4ff; }
 .search-field { flex: 1 1 180px; }
 .month-select { min-width: 130px; font-weight: 700; border-color: #b9c9f7; background: var(--blue-soft); color: var(--blue); }
+.multi-filter { position: relative; flex: 0 0 auto; }
+.multi-filter-toggle { min-width: 145px; display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; text-align: left; }
+.multi-filter-toggle.has-selection { border-color: #9fb8ff; background: var(--blue-soft); color: var(--blue); font-weight: 700; }
+.multi-filter-chevron { color: #8190aa; font-size: 12px; line-height: 1; }
+.multi-filter-menu { display: none; position: absolute; top: calc(100% + 5px); left: 0; min-width: 210px; max-height: 240px; overflow-y: auto; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: #fff; box-shadow: 0 12px 30px rgba(24, 39, 75, .16); z-index: 40; }
+.multi-filter.open .multi-filter-menu { display: grid; gap: 2px; }
+.multi-option { display: flex; align-items: center; gap: 8px; padding: 8px 9px; border-radius: 7px; color: var(--ink); font-size: 11px; cursor: pointer; }
+.multi-option:hover { background: var(--blue-soft); }
+.multi-option input { width: 14px; height: 14px; margin: 0; accent-color: var(--blue); }
+@media (max-width: 510px) {
+  .multi-filter { flex: 1 1 calc(50% - 4px); }
+  .multi-filter-toggle { width: 100%; min-width: 0; }
+  .multi-filter-menu { min-width: 100%; }
+}
 .monthly-metrics { margin-top: 0; }
 .monthly-metrics .metric-value { font-size: clamp(17px, 1.55vw, 22px); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .table-wrap { overflow-x: auto; border: 1px solid #eef1f5; border-radius: 11px; }
