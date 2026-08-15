@@ -9,8 +9,9 @@
     salesTab: "transactions",
     search: "",
     month: "Temmuz",
-    category: "all",
-    brand: "all",
+    category: [],
+    brand: [],
+    openMultiFilter: null,
     sort: "date-desc",
     startDate: "",
     endDate: "",
@@ -112,18 +113,27 @@
     return { sales: sum(items, "salesAmount"), purchase, gross: sum(items, "grossMarginAmount"), rate: purchase ? sum(items, "grossMarginAmount") / purchase : 0, futureCollections, incomplete: items.filter((item) => item.salesAmount === null || item.purchaseAmount === null) };
   }
   function filteredSales() {
+    const categorySelection = selectedFilterValues(state.category);
+    const brandSelection = selectedFilterValues(state.brand);
     let items = allSales().filter((item) => {
       const q = state.search.toLocaleLowerCase("tr-TR");
       const textMatch = !q || [item.customer, item.brand, item.category, item.month].join(" ").toLocaleLowerCase("tr-TR").includes(q);
       const dateMatch = (!state.startDate || String(item.invoiceDate ?? "") >= state.startDate) && (!state.endDate || String(item.invoiceDate ?? "") <= state.endDate);
       const monthMatch = state.month === "all" || item.month === state.month;
-      return textMatch && dateMatch && monthMatch && (state.category === "all" || item.category === state.category) && (state.brand === "all" || item.brand === state.brand);
+      return textMatch && dateMatch && monthMatch && (!categorySelection.length || categorySelection.includes(item.category)) && (!brandSelection.length || brandSelection.includes(item.brand));
     });
     items.sort((a, b) => state.sort === "sales-desc" ? num(b.salesAmount) - num(a.salesAmount) : state.sort === "margin-desc" ? num(b.grossMarginAmount) - num(a.grossMarginAmount) : String(b.invoiceDate ?? "").localeCompare(String(a.invoiceDate ?? "")));
     return items;
   }
   function uniqueValues(key) { return [...new Set(allSales().map((item) => item[key]).filter(Boolean))].sort((a, b) => a.localeCompare(b, "tr")); }
-  function options(values, selected, allLabel) { return `<option value="all">${allLabel}</option>${values.map((value) => `<option value="${escapeHtml(value)}" ${selected === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}`; }
+  function selectedFilterValues(value) { return Array.isArray(value) ? value : value === "all" || !value ? [] : [value]; }
+  function filterButtonLabel(selected, allLabel) { if (!selected.length) return allLabel; return selected.length === 1 ? selected[0] : `${selected.length} seçili`; }
+  function multiFilter(key, values, allLabel) {
+    const selected = selectedFilterValues(state[key]);
+    const isOpen = state.openMultiFilter === key;
+    const label = filterButtonLabel(selected, allLabel);
+    return `<div class="multi-filter${isOpen ? " open" : ""}" data-multi-filter="${key}"><button type="button" class="filter-select multi-filter-toggle${selected.length ? " has-selection" : ""}" data-multi-toggle="${key}" aria-expanded="${isOpen}"><span>${escapeHtml(label)}</span><span class="multi-filter-chevron">⌄</span></button><div class="multi-filter-menu" role="group" aria-label="${escapeHtml(allLabel)}">${values.map((value) => `<label class="multi-option" data-multi-option><input type="checkbox" value="${escapeHtml(value)}" ${selected.includes(value) ? "checked" : ""}/><span>${escapeHtml(value)}</span></label>`).join("")}</div></div>`;
+  }
 
   function pageHeading(eyebrow, title, subtitle, actions = "") { return `<div class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p>${subtitle}</p></div><div class="heading-actions">${actions}</div></div>`; }
   function metricCard(label, value, note, icon, color = "blue", noteClass = "") { return `<div class="metric-card"><div class="metric-top"><span>${label}</span><span class="metric-icon ${color}">${icon}</span></div><div class="metric-value">${value}</div><div class="metric-note ${noteClass}">${note}</div></div>`; }
@@ -166,7 +176,7 @@
   function rankingTable(items) { const max = items[0]?.sales || 1; return `<div class="ranking-list">${items.slice(0, 20).map((item, index) => `<div class="ranking-row"><div class="ranking-number">${String(index + 1).padStart(2, "0")}</div><div class="ranking-main"><div class="ranking-name">${escapeHtml(item.name)}</div><div class="progress"><span style="width:${item.sales / max * 100}%"></span></div><div class="focus-sub">${item.count} işlem · marj ${money(item.gross)}</div></div><div class="ranking-value">${compactMoney(item.sales)}</div></div>`).join("")}</div>`; }
   function filterBar() {
     const available = monthOrder.filter((month) => allSales().some((item) => item.month === month));
-    return `<div class="filter-bar"><select class="filter-select month-select" data-filter="month"><option value="all" ${state.month === "all" ? "selected" : ""}>Tüm aylar</option>${available.map((month) => `<option value="${month}" ${state.month === month ? "selected" : ""}>${month} 2026</option>`).join("")}</select><input class="field date-filter" type="date" data-filter="startDate" aria-label="Başlangıç tarihi" title="Fatura tarihine göre başlangıç" value="${escapeHtml(state.startDate)}"/><input class="field date-filter" type="date" data-filter="endDate" aria-label="Bitiş tarihi" title="Fatura tarihine göre bitiş" value="${escapeHtml(state.endDate)}"/><input class="field search-field" data-filter="search" placeholder="Müşteri, etiket veya kategori ara…" value="${escapeHtml(state.search)}"/><select class="filter-select" data-filter="category">${options(uniqueValues("category"), state.category, "Tüm kategoriler")}</select><select class="filter-select" data-filter="brand">${options(uniqueValues("brand"), state.brand, "Tüm etiketler")}</select><select class="filter-select" data-filter="sort"><option value="date-desc" ${state.sort === "date-desc" ? "selected" : ""}>En yeni</option><option value="sales-desc" ${state.sort === "sales-desc" ? "selected" : ""}>Satış tutarı</option><option value="margin-desc" ${state.sort === "margin-desc" ? "selected" : ""}>Brüt kâr</option></select></div>`;
+    return `<div class="filter-bar"><select class="filter-select month-select" data-filter="month"><option value="all" ${state.month === "all" ? "selected" : ""}>Tüm aylar</option>${available.map((month) => `<option value="${month}" ${state.month === month ? "selected" : ""}>${month} 2026</option>`).join("")}</select><input class="field date-filter" type="date" data-filter="startDate" aria-label="Başlangıç tarihi" title="Fatura tarihine göre başlangıç" value="${escapeHtml(state.startDate)}"/><input class="field date-filter" type="date" data-filter="endDate" aria-label="Bitiş tarihi" title="Fatura tarihine göre bitiş" value="${escapeHtml(state.endDate)}"/><input class="field search-field" data-filter="search" placeholder="Müşteri, etiket veya kategori ara…" value="${escapeHtml(state.search)}"/>${multiFilter("category", uniqueValues("category"), "Tüm kategoriler")}${multiFilter("brand", uniqueValues("brand"), "Tüm etiketler")}<select class="filter-select" data-filter="sort"><option value="date-desc" ${state.sort === "date-desc" ? "selected" : ""}>En yeni</option><option value="sales-desc" ${state.sort === "sales-desc" ? "selected" : ""}>Satış tutarı</option><option value="margin-desc" ${state.sort === "margin-desc" ? "selected" : ""}>Brüt kâr</option></select></div>`;
   }
   function salesView() {
     const available = monthOrder.filter((month) => allSales().some((item) => item.month === month));
@@ -258,6 +268,28 @@
   function exportMonthlyXlsx() { const month = state.month || "Temmuz"; const items = filteredSales(); downloadBlob(`FAZ1-${month}-2026.xlsx`, makeXlsx(items, month)); showToast(`${month} 2026 kayıtları Excel’e aktarıldı.`); }
 
   document.addEventListener("click", (event) => {
+    const multiToggle = event.target.closest("[data-multi-toggle]");
+    if (multiToggle) {
+      state.openMultiFilter = state.openMultiFilter === multiToggle.dataset.multiToggle ? null : multiToggle.dataset.multiToggle;
+      render();
+      return;
+    }
+    const multiOption = event.target.closest("[data-multi-option]");
+    if (multiOption) {
+      const filter = multiOption.closest("[data-multi-filter]");
+      const key = filter?.dataset.multiFilter;
+      const checkbox = multiOption.querySelector("input");
+      if (key && checkbox) {
+        const selected = selectedFilterValues(state[key]);
+        state[key] = checkbox.checked ? [...new Set([...selected, checkbox.value])] : selected.filter((value) => value !== checkbox.value);
+        state.openMultiFilter = key;
+        render();
+      }
+      return;
+    }
+    if (!event.target.closest("[data-multi-filter]") && state.openMultiFilter) {
+      state.openMultiFilter = null;
+    }
     const viewButton = event.target.closest("[data-view]"); if (viewButton) { navigate(viewButton.dataset.view); return; }
     const tab = event.target.closest("[data-sales-tab]"); if (tab) { state.salesTab = tab.dataset.salesTab; render(); return; }
     const action = event.target.closest("[data-action]"); if (!action) return;
