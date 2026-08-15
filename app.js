@@ -289,6 +289,7 @@
     }
     if (!event.target.closest("[data-multi-filter]") && state.openMultiFilter) {
       state.openMultiFilter = null;
+      document.querySelectorAll(".multi-filter.open").forEach((element) => element.classList.remove("open"));
     }
     const viewButton = event.target.closest("[data-view]"); if (viewButton) { navigate(viewButton.dataset.view); return; }
     const tab = event.target.closest("[data-sales-tab]"); if (tab) { state.salesTab = tab.dataset.salesTab; render(); return; }
