@@ -1,0 +1,163 @@
+name: Faz1 hotfix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/faz1-hotfix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply approved Faz 1 changes
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('app.js')
+          s = path.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global s
+              if old not in s:
+                  raise SystemExit(f'Missing pattern: {label}')
+              s = s.replace(old, new, 1)
+
+          replace_once(
+              '    month: "Temmuz",',
+              '    month: baseData.monthlySummary?.[baseData.monthlySummary.length - 1]?.month || "Temmuz",',
+              'latest month startup'
+          )
+
+          replace_once(
+              '''    const dueAdvantage = purchaseAmount !== null && salesDueDays !== null && purchaseDueDays !== null && purchaseDueDays - salesDueDays > 30 ? purchaseAmount : 0;\n    const ermanAdvance = categoryKey === "metin&erman" ? dueAdvantage / 2 : null;\n    const collectionDate = item.invoiceDate && salesDueDays !== null ? addDays(item.invoiceDate, salesDueDays) : null;\n    const paymentDate = item.invoiceDate && purchaseDueDays !== null ? addDays(item.invoiceDate, purchaseDueDays) : null;\n    return { ...item, category, month, monthKey: monthKeyMap[month] ?? "BELIRSIZ", salesAmount, purchaseAmount, salesDueDays, purchaseDueDays, collectionDate, paymentDate, grossMarginRate: rate, grossMarginAmount: gross, metinMargin: normalizedMetinMargin, ermanMargin, dueAdvantage, ermanAdvance };''',
+              '''    const legacyErmanAdvance = salesDueDays !== null && purchaseDueDays !== null && purchaseDueDays - salesDueDays > 30;\n    const ermanAdvanceEnabled = item.ermanAdvanceEnabled === undefined ? legacyErmanAdvance : Boolean(item.ermanAdvanceEnabled);\n    const dueAdvantage = purchaseAmount !== null && ermanAdvanceEnabled ? purchaseAmount : 0;\n    const ermanAdvance = categoryKey === "metin&erman" && ermanAdvanceEnabled && purchaseAmount !== null ? purchaseAmount / 2 : null;\n    return { ...item, category, month, monthKey: monthKeyMap[month] ?? "BELIRSIZ", salesAmount, purchaseAmount, salesDueDays, purchaseDueDays, ermanAdvanceEnabled, grossMarginRate: rate, grossMarginAmount: gross, metinMargin: normalizedMetinMargin, ermanMargin, dueAdvantage, ermanAdvance };''',
+              'Erman advance calculation'
+          )
+
+          replace_once(
+              '''    const futureCollections = items.filter((item) => item.collectionDate && dateDiffDays(item.collectionDate) >= 0 && dateDiffDays(item.collectionDate) <= 30);\n    return { sales: sum(items, "salesAmount"), purchase, gross: sum(items, "grossMarginAmount"), rate: purchase ? sum(items, "grossMarginAmount") / purchase : 0, futureCollections, incomplete: items.filter((item) => item.salesAmount === null || item.purchaseAmount === null) };''',
+              '''    return { sales: sum(items, "salesAmount"), purchase, gross: sum(items, "grossMarginAmount"), rate: purchase ? sum(items, "grossMarginAmount") / purchase : 0, incomplete: items.filter((item) => item.salesAmount === null || item.purchaseAmount === null) };''',
+              'remove future collections metric'
+          )
+
+          replace_once(
+              'const items = allSales(), m = metrics(items), summary = monthlySummary(items), topCustomers = grouped(items, "customer").slice(0, 5), topBrands = grouped(items, "brand").slice(0, 6), maxCustomer = topCustomers[0]?.sales || 1;',
+              'const items = allSales(), m = metrics(items), summary = monthlySummary(items), topCustomers = grouped(items, "customer").slice(0, 5), topBrands = grouped(items, "brand").slice(0, 6), ermanAdvanceItems = items.filter((item) => num(item.ermanAdvance) > 0), maxCustomer = topCustomers[0]?.sales || 1;',
+              'dashboard advance items'
+          )
+
+          replace_once(
+              'Satış, alış, vade tarihleri ve Metin–Erman marj dağılımı tek tabloda. Kayıt ekleyebilir, düzenleyebilir, silebilir ve aylık Excel çıktısı alabilirsin.',
+              'Satış, alış ve Metin–Erman marj dağılımı tek tabloda. Kayıt ekleyebilir, düzenleyebilir, silebilir ve aylık Excel çıktısı alabilirsin.',
+              'dashboard hero copy'
+          )
+
+          old_radar = '''<div class="panel"><div class="panel-heading"><div><h2>Vade radar</h2><p>Önümüzdeki 30 gün</p></div><span class="tag orange">${m.futureCollections.length} kayıt</span></div><div class="alert-list">${m.futureCollections.slice(0, 5).map((item) => `<div class="alert-item"><div class="alert-mark orange">₺</div><div><div class="alert-title">${escapeHtml(item.customer)}</div><div class="alert-text">${compactMoney(item.salesAmount)} · tahsilat ${dateText(item.collectionDate)}</div></div></div>`).join("") || `<div class="empty-state">Önümüzdeki 30 günde planlı tahsilat yok.</div>`}</div></div>'''
+          new_radar = '''<div class="panel"><div class="panel-heading"><div><h2>Erman avans</h2><p>İşaretli satışlar</p></div><span class="tag orange">${ermanAdvanceItems.length} kayıt</span></div><div class="alert-list">${ermanAdvanceItems.slice(0, 5).map((item) => `<div class="alert-item"><div class="alert-mark orange">₺</div><div><div class="alert-title">${escapeHtml(item.customer)}</div><div class="alert-text">${compactMoney(item.ermanAdvance)} avans</div></div></div>`).join("") || `<div class="empty-state">Erman avansı işaretli kayıt yok.</div>`}</div></div>'''
+          replace_once(old_radar, new_radar, 'dashboard radar panel')
+
+          replace_once(
+              '<th class="align-right">Satış tutar</th><th>Tahsilat tarihi</th><th class="align-right">Alış tutar</th><th>Ödeme tarihi</th>',
+              '<th class="align-right">Satış tutar</th><th class="align-right">Alış tutar</th>',
+              'sales table headers'
+          )
+          replace_once(
+              '<td class="align-right"><strong>${item.salesAmount === null ? "—" : money(item.salesAmount)}</strong></td><td>${dateText(item.collectionDate)}</td><td class="align-right">${item.purchaseAmount === null ? "—" : money(item.purchaseAmount)}</td><td>${dateText(item.paymentDate)}</td>',
+              '<td class="align-right"><strong>${item.salesAmount === null ? "—" : money(item.salesAmount)}</strong></td><td class="align-right">${item.purchaseAmount === null ? "—" : money(item.purchaseAmount)}</td>',
+              'sales table date cells'
+          )
+
+          replace_once(
+              '["Kategori", "Fatura Tarihi", "Müşteri", "Etiket", "Satış Tutar", "Tahsilat Tarihi", "Alış Tutar", "Ödeme Tarihi", "Brüt Kâr Oranı", "Brüt Kâr (TL)", "Metin Marj", "Erman Marj", "Erman Avans"]',
+              '["Kategori", "Fatura Tarihi", "Müşteri", "Etiket", "Satış Tutar", "Alış Tutar", "Brüt Kâr Oranı", "Brüt Kâr (TL)", "Metin Marj", "Erman Marj", "Erman Avans"]',
+              'settings columns'
+          )
+
+          replace_once(
+              'const item = existing ?? { category: "Metin", invoiceDate: isoDate(analysisDate), customer: "", brand: "", salesAmount: "", purchaseAmount: "", collectionDate: isoDate(analysisDate), paymentDate: isoDate(analysisDate) };',
+              'const item = existing ?? { category: "Metin", invoiceDate: isoDate(analysisDate), customer: "", brand: "", salesAmount: "", purchaseAmount: "", ermanAdvanceEnabled: false };',
+              'new sale defaults'
+          )
+          replace_once(
+              'Tahsilat ve ödeme tarihleri arasındaki farklardan vade avantajı otomatik hesaplanır.',
+              'Erman avansı gereken satışları tek kutudan işaretleyebilirsin.',
+              'modal summary'
+          )
+          replace_once(
+              '''<div class="col-6"><label>Satış tutar · TL</label><input class="field" type="number" step="0.01" name="salesAmount" value="${fieldValue(item.salesAmount)}"/></div><div class="col-6"><label>Tahsilat tarihi</label><input class="field" type="date" name="collectionDate" value="${fieldValue(item.collectionDate || item.invoiceDate)}"/></div><div class="col-6"><label>Alış tutar · TL</label><input class="field" type="number" step="0.01" name="purchaseAmount" value="${fieldValue(item.purchaseAmount)}"/></div><div class="col-6"><label>Ödeme tarihi</label><input class="field" type="date" name="paymentDate" value="${fieldValue(item.paymentDate || item.invoiceDate)}"/></div>''',
+              '''<div class="col-6"><label>Satış tutar · TL</label><input class="field" type="number" step="0.01" name="salesAmount" value="${fieldValue(item.salesAmount)}"/></div><div class="col-6"><label>Alış tutar · TL</label><input class="field" type="number" step="0.01" name="purchaseAmount" value="${fieldValue(item.purchaseAmount)}"/></div><div class="col-12"><label class="check-field"><input type="checkbox" name="ermanAdvanceEnabled" value="1" ${item.ermanAdvanceEnabled ? "checked" : ""}/><span><strong>Erman avansı var</strong><small>İşaretlenirse alış tutarının yarısı Erman avansı olarak hesaplanır.</small></span></label></div>''',
+              'modal date fields to checkbox'
+          )
+          replace_once(
+              'const raw = { category: form.get("category"), invoiceDate, customer: form.get("customer"), brand: form.get("brand"), salesAmount: nullableNumber(form.get("salesAmount")), salesDueDays: daysBetween(invoiceDate, form.get("collectionDate")), purchaseAmount: nullableNumber(form.get("purchaseAmount")), purchaseDueDays: daysBetween(invoiceDate, form.get("paymentDate")) };',
+              'const raw = { category: form.get("category"), invoiceDate, customer: form.get("customer"), brand: form.get("brand"), salesAmount: nullableNumber(form.get("salesAmount")), purchaseAmount: nullableNumber(form.get("purchaseAmount")), ermanAdvanceEnabled: form.get("ermanAdvanceEnabled") === "1" };',
+              'save sale checkbox'
+          )
+
+          replace_once(
+              'const headers = ["KATEGORİ", "FATURA TARİHİ", "MÜŞTERİ", "ETİKET", "SATIŞ TUTAR", "TAHSİLAT TARİHİ", "ALIŞ TUTAR", "ÖDEME TARİHİ", "BRÜT KÂR ORANI", "BRÜT KÂR (TL)", "METİN MARJ", "ERMAN MARJ", "ERMAN AVANS"]; const rows = filteredSales().map((item) => [item.category, item.invoiceDate, item.customer, item.brand, item.salesAmount, item.collectionDate, item.purchaseAmount, item.paymentDate, item.grossMarginRate, item.grossMarginAmount, item.metinMargin, item.ermanMargin, item.ermanAdvance].map(csvCell).join(";"));',
+              'const headers = ["KATEGORİ", "FATURA TARİHİ", "MÜŞTERİ", "ETİKET", "SATIŞ TUTAR", "ALIŞ TUTAR", "BRÜT KÂR ORANI", "BRÜT KÂR (TL)", "METİN MARJ", "ERMAN MARJ", "ERMAN AVANS"]; const rows = filteredSales().map((item) => [item.category, item.invoiceDate, item.customer, item.brand, item.salesAmount, item.purchaseAmount, item.grossMarginRate, item.grossMarginAmount, item.metinMargin, item.ermanMargin, item.ermanAdvance].map(csvCell).join(";"));',
+              'CSV dates'
+          )
+
+          replace_once(
+              'const headers = ["KATEGORİ", "FATURA TARİHİ", "MÜŞTERİ", "ETİKET", "SATIŞ TUTAR", "TAHSİLAT TARİHİ", "ALIŞ TUTAR", "ÖDEME TARİHİ", "BRÜT KÂR ORANI", "BRÜT KÂR (TL)", "METİN MARJ", "ERMAN MARJ", "ERMAN AVANS"];',
+              'const headers = ["KATEGORİ", "FATURA TARİHİ", "MÜŞTERİ", "ETİKET", "SATIŞ TUTAR", "ALIŞ TUTAR", "BRÜT KÂR ORANI", "BRÜT KÂR (TL)", "METİN MARJ", "ERMAN MARJ", "ERMAN AVANS"];',
+              'XLSX headers'
+          )
+
+          old_xlsx_row = '''      { value: item.category ?? "", type: "string" }, { value: excelSerial(item.invoiceDate), type: "date", style: 3 }, { value: item.customer, type: "string" }, { value: item.brand, type: "string" }, { value: item.salesAmount, type: "number", style: 2 }, { value: excelSerial(item.collectionDate), type: "date", style: 3 }, { value: item.purchaseAmount, type: "number", style: 2 }, { value: excelSerial(item.paymentDate), type: "date", style: 3 }, { formula: `IFERROR(E${row}/G${row}-1,"")`, cached: item.grossMarginRate, style: 4 }, { formula: `IFERROR(E${row}-G${row},"")`, cached: item.grossMarginAmount, style: 2 }, { formula: `IF(LOWER(A${row})="metin",J${row},IF(LOWER(A${row})="metin&erman",J${row}/2,""))`, cached: item.metinMargin, style: 2 }, { formula: `IF(LOWER(A${row})="metin&erman",J${row}/2,"")`, cached: item.ermanMargin, style: 2 }, { formula: `IF(LOWER(A${row})="metin&erman",IF(H${row}-F${row}>30,G${row}/2,0),"")`, cached: item.ermanAdvance, style: 2 },'''
+          new_xlsx_row = '''      { value: item.category ?? "", type: "string" }, { value: excelSerial(item.invoiceDate), type: "date", style: 3 }, { value: item.customer, type: "string" }, { value: item.brand, type: "string" }, { value: item.salesAmount, type: "number", style: 2 }, { value: item.purchaseAmount, type: "number", style: 2 }, { formula: `IFERROR(E${row}/F${row}-1,"")`, cached: item.grossMarginRate, style: 4 }, { formula: `IFERROR(E${row}-F${row},"")`, cached: item.grossMarginAmount, style: 2 }, { formula: `IF(LOWER(A${row})="metin",H${row},IF(LOWER(A${row})="metin&erman",H${row}/2,""))`, cached: item.metinMargin, style: 2 }, { formula: `IF(LOWER(A${row})="metin&erman",H${row}/2,"")`, cached: item.ermanMargin, style: 2 }, { value: item.ermanAdvance, type: "number", style: 2 },'''
+          replace_once(old_xlsx_row, new_xlsx_row, 'XLSX row columns')
+
+          replace_once(
+              '''[{ value: "Alış toplamı" }, { formula: `SUM('İşlemler'!G2:G${last})`, cached: sum(items, "purchaseAmount"), style: 2 }], [{ value: "Brüt kâr" }, { formula: `SUM('İşlemler'!J2:J${last})`, cached: sum(items, "grossMarginAmount"), style: 2 }], [{ value: "Brüt kâr oranı" }, { formula: "IFERROR(B6/B5,0)", cached: metrics(items).rate, style: 4 }], [{ value: "Metin marj" }, { formula: `SUM('İşlemler'!K2:K${last})`, cached: sum(items, "metinMargin"), style: 2 }], [{ value: "Erman marj" }, { formula: `SUM('İşlemler'!L2:L${last})`, cached: sum(items, "ermanMargin"), style: 2 }], [{ value: "Erman avans" }, { formula: `SUM('İşlemler'!M2:M${last})`, cached: sum(items, "ermanAdvance"), style: 2 }]''',
+              '''[{ value: "Alış toplamı" }, { formula: `SUM('İşlemler'!F2:F${last})`, cached: sum(items, "purchaseAmount"), style: 2 }], [{ value: "Brüt kâr" }, { formula: `SUM('İşlemler'!H2:H${last})`, cached: sum(items, "grossMarginAmount"), style: 2 }], [{ value: "Brüt kâr oranı" }, { formula: "IFERROR(B6/B5,0)", cached: metrics(items).rate, style: 4 }], [{ value: "Metin marj" }, { formula: `SUM('İşlemler'!I2:I${last})`, cached: sum(items, "metinMargin"), style: 2 }], [{ value: "Erman marj" }, { formula: `SUM('İşlemler'!J2:J${last})`, cached: sum(items, "ermanMargin"), style: 2 }], [{ value: "Erman avans" }, { formula: `SUM('İşlemler'!K2:K${last})`, cached: sum(items, "ermanAdvance"), style: 2 }]''',
+              'XLSX summary columns'
+          )
+          replace_once(
+              '''{ formula: `SUMIF('İşlemler'!$D$2:$D$${last},A${row},'İşlemler'!$J$2:$J$${last})`, cached: brand.gross, style: 2 }''',
+              '''{ formula: `SUMIF('İşlemler'!$D$2:$D$${last},A${row},'İşlemler'!$H$2:$H$${last})`, cached: brand.gross, style: 2 }''',
+              'XLSX brand gross column'
+          )
+          replace_once(
+              '"xl/worksheets/sheet2.xml": sheetXml(tableRows, [18, 14, 26, 18, 16, 16, 16, 16, 17, 17, 16, 16, 16], "M")',
+              '"xl/worksheets/sheet2.xml": sheetXml(tableRows, [18, 14, 26, 18, 16, 16, 17, 17, 16, 16, 16], "K")',
+              'XLSX widths/filter'
+          )
+
+          path.write_text(s, encoding='utf-8')
+
+          css = Path('style.css')
+          c = css.read_text(encoding='utf-8')
+          marker = '/* Erman advance checkbox */'
+          if marker not in c:
+              c += '''\n\n/* Erman advance checkbox */\n.check-field { display: flex; align-items: flex-start; gap: 11px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-soft); cursor: pointer; }\n.check-field input { width: 17px; height: 17px; margin: 1px 0 0; accent-color: var(--blue); flex: 0 0 auto; }\n.check-field span { display: grid; gap: 3px; }\n.check-field strong { font-size: 12px; color: var(--ink); }\n.check-field small { font-size: 10px; line-height: 1.45; color: var(--muted); }\n'''
+              css.write_text(c, encoding='utf-8')
+          PY
+          node --check app.js
+          ! grep -q 'Tahsilat tarihi' app.js
+          ! grep -q 'Ödeme tarihi' app.js
+      - name: Commit changes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js style.css
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "fix: simplify Faz 1 dates and open latest month"
+          git push origin HEAD:main
