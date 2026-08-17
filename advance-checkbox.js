@@ -1,5 +1,6 @@
 (() => {
   let patchScheduled = false;
+  let observer;
 
   const money = (value) => new Intl.NumberFormat("tr-TR", {
     style: "currency",
@@ -168,11 +169,16 @@
 
   function patch() {
     patchScheduled = false;
-    ensureStyles();
-    patchSalesTable();
-    patchSaleModal();
-    patchDashboard();
-    patchSettings();
+    observer?.disconnect();
+    try {
+      ensureStyles();
+      patchSalesTable();
+      patchSaleModal();
+      patchDashboard();
+      patchSettings();
+    } finally {
+      observer?.observe(document.body, { childList: true, subtree: true });
+    }
   }
 
   function schedulePatch() {
@@ -197,7 +203,7 @@
     if (event.target?.id === "saleForm") prepareFormForLegacyCore(event.target);
   }, true);
 
-  const observer = new MutationObserver(schedulePatch);
+  observer = new MutationObserver(schedulePatch);
   observer.observe(document.body, { childList: true, subtree: true });
   schedulePatch();
 })();
