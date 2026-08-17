@@ -20,6 +20,7 @@
   // still survive the re-render that follows Save.
   const memoryStorage = new Map();
   let applyingRemoteState = false;
+  let monthWasUserSelected = false;
 
   const appView = document.getElementById("appView");
   const toast = document.getElementById("toast");
@@ -313,7 +314,7 @@
     if (type === "export-monthly-xlsx") exportMonthlyXlsx();
     if (type === "clear-local") { if (!confirm("Tüm yerel düzenleme, silme ve yeni kayıtlar sıfırlansın mı?")) return; ["faz1_overrides", "faz1_deleted", "faz1_custom"].forEach((key) => { memoryStorage.delete(key); try { localStorage.removeItem(key); } catch { /* storage may be blocked */ } }); window.pushCloudState?.(cloudState()); render(); showToast("Yerel ve bulut değişiklikleri sıfırlandı."); }
   });
-  document.addEventListener("change", (event) => { const filter = event.target.closest("[data-filter]"); if (!filter) return; const key = filter.dataset.filter; if (key === "month") state.month = filter.value; if (key === "category") state.category = filter.value; if (key === "brand") state.brand = filter.value; if (key === "sort") state.sort = filter.value; if (key === "startDate") state.startDate = filter.value; if (key === "endDate") state.endDate = filter.value; if ((key === "startDate" || key === "endDate") && filter.value) state.month = "all"; render(); });
+  document.addEventListener("change", (event) => { const filter = event.target.closest("[data-filter]"); if (!filter) return; const key = filter.dataset.filter; if (key === "month") { state.month = filter.value; monthWasUserSelected = true; } if (key === "category") state.category = filter.value; if (key === "brand") state.brand = filter.value; if (key === "sort") state.sort = filter.value; if (key === "startDate") state.startDate = filter.value; if (key === "endDate") state.endDate = filter.value; if ((key === "startDate" || key === "endDate") && filter.value) { state.month = "all"; monthWasUserSelected = true; } render(); });
   document.addEventListener("input", (event) => { const filter = event.target.closest('[data-filter="search"]'); if (!filter) return; state.search = filter.value; if (state.view === "sales" && state.salesTab === "transactions") { const panel = appView.querySelector(".panel"); if (panel) panel.innerHTML = salesTable(filteredSales()); } });
   document.addEventListener("submit", (event) => { if (event.target.id !== "saleForm") return; event.preventDefault(); const form = new FormData(event.target); saveSale(form); closeModal(); render(); showToast(form.get("id") ? "Satış güncellendi." : "Yeni satış eklendi."); });
   document.getElementById("mobileMenu").addEventListener("click", () => document.getElementById("sidebar").classList.toggle("open"));
@@ -321,19 +322,23 @@
   modalBackdrop.addEventListener("click", (event) => { if (event.target === modalBackdrop) closeModal(); });
   window.__FAZ1 = { makeXlsx, allSales, monthlySummary };
   window.getFAZ1CloudState = cloudState;
-  window.applyFAZ1CloudState = (state) => {
-    if (!state || typeof state !== "object") return;
+  window.applyFAZ1CloudState = (remoteState) => {
+    if (!remoteState || typeof remoteState !== "object") return;
     applyingRemoteState = true;
     const values = {
-      faz1_overrides: state.overrides && typeof state.overrides === "object" ? state.overrides : {},
-      faz1_deleted: Array.isArray(state.deleted) ? state.deleted : [],
-      faz1_custom: Array.isArray(state.custom) ? state.custom : [],
+      faz1_overrides: remoteState.overrides && typeof remoteState.overrides === "object" ? remoteState.overrides : {},
+      faz1_deleted: Array.isArray(remoteState.deleted) ? remoteState.deleted : [],
+      faz1_custom: Array.isArray(remoteState.custom) ? remoteState.custom : [],
     };
     Object.entries(values).forEach(([key, value]) => {
       memoryStorage.set(key, value);
       try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* in-memory fallback */ }
     });
     applyingRemoteState = false;
+    if (!monthWasUserSelected) {
+      const available = monthOrder.filter((month) => allSales().some((item) => item.month === month));
+      state.month = available[available.length - 1] || state.month;
+    }
     render();
   };
   render();
