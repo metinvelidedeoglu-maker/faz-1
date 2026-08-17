@@ -2,6 +2,7 @@
   let scheduled = false;
   let salesMonthInitialized = false;
   let userChangedFilters = false;
+  let observer;
 
   const money = (value) => new Intl.NumberFormat("tr-TR", {
     style: "currency",
@@ -106,11 +107,16 @@
 
   function refresh() {
     scheduled = false;
-    if (!cloudReady()) return;
-    const period = latestPeriod();
-    if (!period) return;
-    updateDashboard(period);
-    initializeSalesMonth(period);
+    observer?.disconnect();
+    try {
+      if (!cloudReady()) return;
+      const period = latestPeriod();
+      if (!period) return;
+      updateDashboard(period);
+      initializeSalesMonth(period);
+    } finally {
+      observer?.observe(document.body, { childList: true, subtree: true, characterData: true });
+    }
   }
 
   function scheduleRefresh() {
@@ -123,7 +129,7 @@
     if (event.isTrusted && event.target.closest?.("[data-filter]")) userChangedFilters = true;
   }, true);
 
-  const observer = new MutationObserver(scheduleRefresh);
+  observer = new MutationObserver(scheduleRefresh);
   observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   scheduleRefresh();
 })();
