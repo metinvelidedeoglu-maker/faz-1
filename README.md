@@ -7,3 +7,4 @@ Vensis / MetinOS FAZ 1 satış ve finans takip uygulaması.
 - Ana kaynak: `data.js`
 - Kullanıcı değişiklikleri: Firebase + yerel yedek
 - Ağustos 2026 satış faturaları uygulama açılışında eksikse otomatik tamamlanır.
+- Erman avans koşulu uygulamada işaret kutusu ile yönetilir.
