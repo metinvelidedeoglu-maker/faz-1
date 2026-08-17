@@ -1,0 +1,24 @@
+name: Export Faz 1 Backup ZIP
+
+on:
+  push:
+    branches:
+      - zip-export-2026-08-17-2207
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create exact backup ZIP
+        run: |
+          zip -r faz-1-backup-2026-08-17-2207.zip . -x '.git/*' '.github/workflows/zip-export.yml'
+      - name: Upload backup ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: faz-1-backup-2026-08-17-2207
+          path: faz-1-backup-2026-08-17-2207.zip
+          if-no-files-found: error
