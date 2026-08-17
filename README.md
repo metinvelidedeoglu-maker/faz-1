@@ -1,12 +1,9 @@
 # FAZ 1
 
-Vensis satış takip uygulaması.
+Vensis / MetinOS FAZ 1 satış ve finans takip uygulaması.
 
-- Firebase/Firestore ile kullanıcıya bağlı senkronizasyon
-- Satış ekleme, düzenleme ve silme
-- CSV ve JSON yedekleme
-- Firebase verileri GitHub deposunda tutulmaz; kayıtlar kullanıcı hesabına bağlı Firestore dokümanında saklanır.
+## Veri
 
-## Canlı uygulama
-
-https://metin-finans-faz1.web.app
+- Ana kaynak: `data.js`
+- Kullanıcı değişiklikleri: Firebase + yerel yedek
+- Ağustos 2026 satış faturaları uygulama açılışında eksikse otomatik tamamlanır.
