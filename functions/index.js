@@ -1,9 +1,10 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
-const admin = require("firebase-admin");
+const { initializeApp } = require("firebase-admin/app");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 
-admin.initializeApp();
-const db = admin.firestore();
+initializeApp();
+const db = getFirestore();
 
 const parasutClientId = defineSecret("PARASUT_CLIENT_ID");
 const parasutClientSecret = defineSecret("PARASUT_CLIENT_SECRET");
@@ -67,7 +68,7 @@ async function refreshAccessToken() {
 
   await db.doc("integrations/parasut").set({
     refreshToken: token.refresh_token || integration.refreshToken,
-    tokenUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    tokenUpdatedAt: FieldValue.serverTimestamp(),
   }, { merge: true });
 
   return token.access_token;
@@ -120,8 +121,8 @@ exports.parasutBootstrap = onCall(
         refreshToken: token.refresh_token,
         companyId,
         companies,
-        connectedAt: admin.firestore.FieldValue.serverTimestamp(),
-        tokenUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        connectedAt: FieldValue.serverTimestamp(),
+        tokenUpdatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
 
       return {
