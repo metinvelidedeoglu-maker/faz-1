@@ -1,25 +1,25 @@
-const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { onRequest } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
-const { initializeApp } = require("firebase-admin/app");
-const { getFirestore, FieldValue } = require("firebase-admin/firestore");
-
-initializeApp();
-const db = getFirestore();
 
 const parasutClientId = defineSecret("PARASUT_CLIENT_ID");
 const parasutClientSecret = defineSecret("PARASUT_CLIENT_SECRET");
 const parasutAuthCode = defineSecret("PARASUT_AUTH_CODE");
 const bridgeApiKey = defineSecret("PARASUT_BRIDGE_API_KEY");
 
-const ALLOWED_EMAIL = "metinvelidedeoglu@gmail.com";
 const PARASUT_BASE = "https://api.parasut.com";
 const REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob";
 
-function assertAllowed(request) {
-  const email = request.auth?.token?.email?.toLowerCase();
-  if (!request.auth || email !== ALLOWED_EMAIL) {
-    throw new HttpsError("permission-denied", "Bu işlem için yetkin yok.");
-  }
+let cachedDb = null;
+let cachedFieldValue = null;
+
+function getAdmin() {
+  if (cachedDb && cachedFieldValue) return { db: cachedDb, FieldValue: cachedFieldValue };
+  const { getApps, initializeApp } = require("firebase-admin/app");
+  const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+  if (!getApps().length) initializeApp();
+  cachedDb = getFirestore();
+  cachedFieldValue = FieldValue;
+  return { db: cachedDb, FieldValue: cachedFieldValue };
 }
 
 function assertBridgeKey(req) {
@@ -37,11 +37,16 @@ async function tokenRequest(params) {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(params),
   });
+  const text = await response.text();
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch { payload = { raw: text }; }
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Paraşüt token hatası (${response.status}): ${text}`);
+    const err = new Error(`Paraşüt token hatası (${response.status})`);
+    err.status = response.status;
+    err.details = payload;
+    throw err;
   }
-  return response.json();
+  return payload;
 }
 
 async function parasutRequest(accessToken, path, options = {}) {
@@ -55,7 +60,8 @@ async function parasutRequest(accessToken, path, options = {}) {
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
   const text = await response.text();
-  const payload = text ? (() => { try { return JSON.parse(text); } catch { return { raw: text }; } })() : null;
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch { payload = { raw: text }; }
   if (!response.ok) {
     const err = new Error(`Paraşüt API hatası (${response.status})`);
     err.status = response.status;
@@ -66,28 +72,29 @@ async function parasutRequest(accessToken, path, options = {}) {
 }
 
 async function getIntegration() {
+  const { db } = getAdmin();
   const snap = await db.doc("integrations/parasut").get();
   return snap.exists ? snap.data() : {};
 }
 
+async function saveIntegration(data) {
+  const { db, FieldValue } = getAdmin();
+  await db.doc("integrations/parasut").set({
+    ...data,
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
 async function refreshAccessToken() {
   const integration = await getIntegration();
-  if (!integration.refreshToken) {
-    throw new Error("Paraşüt bağlantısı henüz başlatılmamış.");
-  }
-
+  if (!integration.refreshToken) throw new Error("Paraşüt bağlantısı henüz başlatılmamış.");
   const token = await tokenRequest({
     grant_type: "refresh_token",
     client_id: parasutClientId.value(),
     client_secret: parasutClientSecret.value(),
     refresh_token: integration.refreshToken,
   });
-
-  await db.doc("integrations/parasut").set({
-    refreshToken: token.refresh_token || integration.refreshToken,
-    tokenUpdatedAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
-
+  await saveIntegration({ refreshToken: token.refresh_token || integration.refreshToken });
   return token.access_token;
 }
 
@@ -119,64 +126,24 @@ async function bootstrapParasut() {
     code: parasutAuthCode.value(),
     redirect_uri: REDIRECT_URI,
   });
-
   const me = await parasutRequest(token.access_token, "/v4/me");
   const companies = findCompanyCandidates(me);
   const companyId = companies.length === 1 ? companies[0].id : null;
-
-  await db.doc("integrations/parasut").set({
-    refreshToken: token.refresh_token,
-    companyId,
-    companies,
-    connectedAt: FieldValue.serverTimestamp(),
-    tokenUpdatedAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
-
+  await saveIntegration({ refreshToken: token.refresh_token, companyId, companies });
   return { ok: true, companyId, companies, me };
 }
-
-exports.parasutBootstrap = onCall(
-  { secrets: [parasutClientId, parasutClientSecret, parasutAuthCode], region: "europe-west1" },
-  async (request) => {
-    assertAllowed(request);
-    try { return await bootstrapParasut(); }
-    catch (error) {
-      console.error(error);
-      throw new HttpsError("internal", error.message || "Paraşüt ilk bağlantısı kurulamadı.");
-    }
-  }
-);
-
-exports.parasutPreview = onCall(
-  { secrets: [parasutClientId, parasutClientSecret], region: "europe-west1" },
-  async (request) => {
-    assertAllowed(request);
-    try {
-      const integration = await getIntegration();
-      if (!integration.companyId) throw new Error("Paraşüt firma ID henüz belirlenmedi.");
-      const accessToken = await refreshAccessToken();
-      const companyId = integration.companyId;
-      const [salesInvoices, purchaseBills] = await Promise.all([
-        parasutRequest(accessToken, `/v4/${companyId}/sales_invoices?page[size]=25&include=contact,details,details.product`),
-        parasutRequest(accessToken, `/v4/${companyId}/purchase_bills?page[size]=25&include=contact,details,details.product`),
-      ]);
-      return { ok: true, companyId, salesInvoices, purchaseBills };
-    } catch (error) {
-      console.error(error);
-      throw new HttpsError("internal", error.message || "Paraşüt bağlantısı kurulamadı.");
-    }
-  }
-);
 
 exports.parasutBridge = onRequest(
   {
     secrets: [parasutClientId, parasutClientSecret, parasutAuthCode, bridgeApiKey],
     region: "europe-west1",
     cors: true,
+    timeoutSeconds: 60,
   },
   async (req, res) => {
     try {
       assertBridgeKey(req);
+
       if (req.method === "GET" && (req.path === "/" || req.path === "/health")) {
         const integration = await getIntegration();
         return res.json({ ok: true, connected: Boolean(integration.refreshToken), companyId: integration.companyId || null });
@@ -192,22 +159,17 @@ exports.parasutBridge = onRequest(
       const accessToken = await refreshAccessToken();
 
       if (req.method === "GET" && req.path === "/contacts") {
-        const name = String(req.query.name || "").trim();
-        const taxNumber = String(req.query.tax_number || "").trim();
-        const email = String(req.query.email || "").trim();
         const qs = new URLSearchParams({ "page[size]": "25" });
-        if (name) qs.set("filter[name]", name);
-        if (taxNumber) qs.set("filter[tax_number]", taxNumber);
-        if (email) qs.set("filter[email]", email);
+        if (req.query.name) qs.set("filter[name]", String(req.query.name));
+        if (req.query.tax_number) qs.set("filter[tax_number]", String(req.query.tax_number));
+        if (req.query.email) qs.set("filter[email]", String(req.query.email));
         return res.json(await parasutRequest(accessToken, `/v4/${companyId}/contacts?${qs}`));
       }
 
       if (req.method === "GET" && req.path === "/products") {
-        const name = String(req.query.name || "").trim();
-        const code = String(req.query.code || "").trim();
         const qs = new URLSearchParams({ "page[size]": "25" });
-        if (name) qs.set("filter[name]", name);
-        if (code) qs.set("filter[code]", code);
+        if (req.query.name) qs.set("filter[name]", String(req.query.name));
+        if (req.query.code) qs.set("filter[code]", String(req.query.code));
         return res.json(await parasutRequest(accessToken, `/v4/${companyId}/products?${qs}`));
       }
 
@@ -228,11 +190,6 @@ exports.parasutBridge = onRequest(
         const { contact_id, issue_date, due_date, description, currency = "TRL", lines = [] } = req.body || {};
         if (!contact_id || !issue_date || !Array.isArray(lines) || !lines.length) {
           return res.status(400).json({ error: "contact_id, issue_date ve en az bir fatura kalemi zorunlu." });
-        }
-        for (const line of lines) {
-          if (!line.product_id || !(Number(line.quantity) > 0) || Number(line.unit_price) < 0) {
-            return res.status(400).json({ error: "Her kalemde product_id, quantity>0 ve unit_price>=0 zorunlu." });
-          }
         }
         const body = {
           data: {
