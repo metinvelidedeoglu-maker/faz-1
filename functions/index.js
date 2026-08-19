@@ -32,10 +32,14 @@ function assertBridgeKey(req) {
 }
 
 async function tokenRequest(params) {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(params)) {
+    form.append(key, String(value));
+  }
+
   const response = await fetch(`${PARASUT_BASE}/oauth/token`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(params),
+    body: form,
   });
   const text = await response.text();
   let payload = null;
