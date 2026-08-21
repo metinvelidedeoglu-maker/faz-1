@@ -10,6 +10,7 @@ const PARASUT_BASE = "https://api.parasut.com";
 const REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob";
 const CONTACT_INDEX_DOC = "integrations/parasutContactsIndex";
 const MAX_CONTACT_PAGES = 40;
+const CONTACT_INDEX_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 let cachedDb = null;
 let cachedFieldValue = null;
@@ -40,14 +41,9 @@ function assertBridgeKey(req) {
 
 async function tokenRequest(params) {
   const form = new FormData();
-  for (const [key, value] of Object.entries(params)) {
-    form.append(key, String(value));
-  }
+  for (const [key, value] of Object.entries(params)) form.append(key, String(value));
 
-  const response = await fetch(`${PARASUT_BASE}/oauth/token`, {
-    method: "POST",
-    body: form,
-  });
+  const response = await fetch(`${PARASUT_BASE}/oauth/token`, { method: "POST", body: form });
   const text = await response.text();
   let payload = null;
   try { payload = text ? JSON.parse(text) : null; } catch { payload = { raw: text }; }
@@ -90,10 +86,7 @@ async function getIntegration() {
 
 async function saveIntegration(data) {
   const { db, FieldValue } = getAdmin();
-  await db.doc("integrations/parasut").set({
-    ...data,
-    updatedAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
+  await db.doc("integrations/parasut").set({ ...data, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
 }
 
 function normalizeSearchText(value) {
@@ -167,13 +160,34 @@ async function rebuildContactsIndex(accessToken, companyId) {
     updatedAt: FieldValue.serverTimestamp(),
   });
 
-  return { ok: true, count: contacts.length, pages, truncated };
+  return { companyId: String(companyId), contacts, count: contacts.length, pages, truncated, rebuilt: true };
 }
 
 async function getContactsIndex() {
   const { db } = getAdmin();
   const snap = await db.doc(CONTACT_INDEX_DOC).get();
   return snap.exists ? snap.data() : null;
+}
+
+function timestampToMs(value) {
+  if (!value) return 0;
+  if (typeof value.toMillis === "function") return value.toMillis();
+  if (typeof value.seconds === "number") return value.seconds * 1000;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function contactIndexIsUsable(index, companyId) {
+  if (!index || String(index.companyId) !== String(companyId)) return false;
+  if (!Array.isArray(index.contacts) || !index.contacts.length) return false;
+  const updatedAtMs = timestampToMs(index.updatedAt);
+  return updatedAtMs > 0 && Date.now() - updatedAtMs <= CONTACT_INDEX_MAX_AGE_MS;
+}
+
+async function ensureContactsIndex(accessToken, companyId) {
+  const existing = await getContactsIndex();
+  if (contactIndexIsUsable(existing, companyId)) return { ...existing, rebuilt: false };
+  return rebuildContactsIndex(accessToken, companyId);
 }
 
 function searchContactsInIndex(contacts, searchName) {
@@ -250,7 +264,7 @@ exports.parasutBridge = onRequest(
     secrets: [parasutClientId, parasutClientSecret, parasutAuthCode, bridgeApiKey],
     region: "europe-west1",
     cors: true,
-    timeoutSeconds: 60,
+    timeoutSeconds: 120,
   },
   async (req, res) => {
     try {
@@ -264,14 +278,13 @@ exports.parasutBridge = onRequest(
           connected: Boolean(integration.refreshToken),
           companyId: integration.companyId || null,
           companies: integration.companies || [],
-          contactsIndexed: Boolean(index && String(index.companyId) === String(integration.companyId)),
+          contactsIndexed: Boolean(index && String(index.companyId) === String(integration.companyId) && Array.isArray(index.contacts) && index.contacts.length),
           contactsIndexCount: index?.count || 0,
+          contactsIndexAutoRefresh: true,
         });
       }
 
-      if (req.method === "POST" && req.path === "/bootstrap") {
-        return res.json(await bootstrapParasut());
-      }
+      if (req.method === "POST" && req.path === "/bootstrap") return res.json(await bootstrapParasut());
 
       if (req.method === "POST" && req.path === "/select-company") {
         const integration = await getIntegration();
@@ -291,7 +304,8 @@ exports.parasutBridge = onRequest(
       const accessToken = await refreshAccessToken();
 
       if (req.method === "POST" && req.path === "/reindex-contacts") {
-        return res.json(await rebuildContactsIndex(accessToken, companyId));
+        const index = await rebuildContactsIndex(accessToken, companyId);
+        return res.json({ ok: true, count: index.count, pages: index.pages, truncated: index.truncated });
       }
 
       if (req.method === "GET" && req.path === "/contacts") {
@@ -300,24 +314,22 @@ exports.parasutBridge = onRequest(
         const email = String(req.query.email || "").trim();
 
         if (searchName) {
-          const index = await getContactsIndex();
-          if (index && String(index.companyId) === String(companyId) && Array.isArray(index.contacts)) {
-            let matches = searchContactsInIndex(index.contacts, searchName);
-            if (taxNumber) matches = matches.filter((c) => String(c?.attributes?.tax_number || "") === taxNumber);
-            if (email) matches = matches.filter((c) => String(c?.attributes?.email || "").toLowerCase() === email.toLowerCase());
-            return res.json({
-              data: matches,
-              meta: {
-                local_search: true,
-                indexed_contacts: index.count || index.contacts.length,
-                index_truncated: Boolean(index.truncated),
-              },
-            });
-          }
+          const index = await ensureContactsIndex(accessToken, companyId);
+          let matches = searchContactsInIndex(index.contacts || [], searchName);
+          if (taxNumber) matches = matches.filter((c) => String(c?.attributes?.tax_number || "") === taxNumber);
+          if (email) matches = matches.filter((c) => String(c?.attributes?.email || "").toLowerCase() === email.toLowerCase());
+          return res.json({
+            data: matches,
+            meta: {
+              local_search: true,
+              auto_indexed: Boolean(index.rebuilt),
+              indexed_contacts: index.count || index.contacts?.length || 0,
+              index_truncated: Boolean(index.truncated),
+            },
+          });
         }
 
         const qs = new URLSearchParams({ "page[size]": "25" });
-        if (searchName) qs.set("filter[name]", searchName);
         if (taxNumber) qs.set("filter[tax_number]", taxNumber);
         if (email) qs.set("filter[email]", email);
         return res.json(await parasutRequest(accessToken, `/v4/${companyId}/contacts?${qs}`));
@@ -331,14 +343,20 @@ exports.parasutBridge = onRequest(
       }
 
       if (req.method === "GET" && req.path === "/sales-invoices") {
-        const qs = new URLSearchParams({ "page[size]": String(Math.min(Number(req.query.page_size) || 15, 25)), include: "contact,details,details.product,payments" });
+        const qs = new URLSearchParams({
+          "page[size]": String(Math.min(Number(req.query.page_size) || 15, 25)),
+          include: "contact,details,details.product,payments",
+        });
         if (req.query.issue_date) qs.set("filter[issue_date]", String(req.query.issue_date));
         if (req.query.payment_status) qs.set("filter[payment_status]", String(req.query.payment_status));
         return res.json(await parasutRequest(accessToken, `/v4/${companyId}/sales_invoices?${qs}`));
       }
 
       if (req.method === "GET" && req.path === "/purchase-bills") {
-        const qs = new URLSearchParams({ "page[size]": String(Math.min(Number(req.query.page_size) || 15, 25)), include: "contact,details,details.product,payments" });
+        const qs = new URLSearchParams({
+          "page[size]": String(Math.min(Number(req.query.page_size) || 15, 25)),
+          include: "contact,details,details.product,payments",
+        });
         if (req.query.issue_date) qs.set("filter[issue_date]", String(req.query.issue_date));
         return res.json(await parasutRequest(accessToken, `/v4/${companyId}/purchase_bills?${qs}`));
       }
