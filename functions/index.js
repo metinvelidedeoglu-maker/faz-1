@@ -11,6 +11,7 @@ const REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob";
 const CONTACT_INDEX_DOC = "integrations/parasutContactsIndex";
 const MAX_CONTACT_PAGES = 40;
 const CONTACT_INDEX_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const GENERAL_INVOICE_PRODUCT_NAME = "VENSIS GENEL FATURA KALEMİ";
 
 let cachedDb = null;
 let cachedFieldValue = null;
@@ -211,125 +212,6 @@ function searchContactsInIndex(contacts, searchName) {
     .map((item) => item.contact);
 }
 
-function compactProduct(product) {
-  const a = product?.attributes || {};
-  return {
-    id: String(product?.id || ""),
-    type: product?.type || "products",
-    attributes: {
-      name: a.name || "",
-      code: a.code || null,
-      vat_rate: a.vat_rate ?? null,
-      sales_excise_duty: a.sales_excise_duty ?? null,
-      sales_excise_duty_type: a.sales_excise_duty_type || null,
-      purchase_excise_duty: a.purchase_excise_duty ?? null,
-      purchase_excise_duty_type: a.purchase_excise_duty_type || null,
-      unit: a.unit || null,
-      sales_price: a.sales_price ?? null,
-      purchase_price: a.purchase_price ?? null,
-      currency: a.currency || null,
-      inventory_tracking: a.inventory_tracking ?? null,
-      initial_stock_count: a.initial_stock_count ?? null,
-    },
-  };
-}
-
-function productMatchScore(product, name, code) {
-  const productName = normalizeSearchText(product?.attributes?.name);
-  const productCode = normalizeSearchText(product?.attributes?.code);
-  const needle = normalizeSearchText(name);
-  const wantedCode = normalizeSearchText(code);
-
-  if (wantedCode && productCode === wantedCode) return 0;
-  if (!needle) return wantedCode && productCode.includes(wantedCode) ? 1 : null;
-
-  const tokens = needle.split(" ").filter(Boolean);
-  if (productName === needle) return 0;
-  if (productName.startsWith(needle)) return 1;
-  if (productName.includes(needle)) return 2;
-  if (tokens.every((token) => productName.includes(token))) return 3;
-  if (tokens.length > 1 && tokens.filter((token) => productName.includes(token)).length >= Math.ceil(tokens.length * 0.7)) return 4;
-  if (wantedCode && productCode.includes(wantedCode)) return 1;
-  return null;
-}
-
-function buildProductSearchTerms(name) {
-  const raw = String(name || "").trim();
-  if (!raw) return [];
-  const normalized = normalizeSearchText(raw);
-  const tokens = normalized.split(" ").filter((token) => token.length >= 2);
-  const terms = [raw, normalized];
-
-  if (tokens.length >= 2) {
-    terms.push(`${tokens[0]} ${tokens[1]}`);
-    terms.push(`${tokens[tokens.length - 2]} ${tokens[tokens.length - 1]}`);
-  }
-
-  const informative = [...tokens].sort((a, b) => b.length - a.length);
-  terms.push(...informative.slice(0, 3));
-
-  const seen = new Set();
-  return terms
-    .map((term) => String(term || "").trim())
-    .filter((term) => {
-      const key = normalizeSearchText(term);
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, 6);
-}
-
-async function smartProductSearch(accessToken, companyId, name, code) {
-  const productMap = new Map();
-  const terms = buildProductSearchTerms(name);
-  let apiCalls = 0;
-
-  if (code) {
-    const qs = new URLSearchParams({ "page[size]": "25", "filter[code]": String(code) });
-    const payload = await parasutRequest(accessToken, `/v4/${companyId}/products?${qs}`);
-    apiCalls += 1;
-    for (const row of Array.isArray(payload?.data) ? payload.data : []) {
-      productMap.set(String(row.id), row);
-    }
-  }
-
-  for (const term of terms) {
-    const qs = new URLSearchParams({ "page[size]": "25", "filter[name]": term });
-    const payload = await parasutRequest(accessToken, `/v4/${companyId}/products?${qs}`);
-    apiCalls += 1;
-    for (const row of Array.isArray(payload?.data) ? payload.data : []) {
-      productMap.set(String(row.id), row);
-    }
-    if (productMap.size >= 75) break;
-  }
-
-  const ranked = [...productMap.values()]
-    .map((product) => {
-      const score = productMatchScore(product, name, code);
-      return score == null ? null : { product, score };
-    })
-    .filter(Boolean)
-    .sort((a, b) => {
-      if (a.score !== b.score) return a.score - b.score;
-      const aName = normalizeSearchText(a.product?.attributes?.name);
-      const bName = normalizeSearchText(b.product?.attributes?.name);
-      return aName.length - bName.length || aName.localeCompare(bName, "tr");
-    })
-    .slice(0, 25)
-    .map(({ product }) => compactProduct(product));
-
-  return {
-    data: ranked,
-    meta: {
-      smart_search: true,
-      api_calls: apiCalls,
-      candidates_checked: productMap.size,
-      search_terms: terms,
-    },
-  };
-}
-
 async function refreshAccessToken() {
   const integration = await getIntegration();
   if (!integration.refreshToken) throw new Error("Paraşüt bağlantısı henüz başlatılmamış.");
@@ -341,6 +223,54 @@ async function refreshAccessToken() {
   });
   await saveIntegration({ refreshToken: token.refresh_token || integration.refreshToken });
   return token.access_token;
+}
+
+async function resolveGeneralInvoiceProduct(accessToken, companyId, integration) {
+  if (integration?.generalInvoiceProductId) return String(integration.generalInvoiceProductId);
+
+  const wanted = normalizeSearchText(GENERAL_INVOICE_PRODUCT_NAME);
+  const terms = [GENERAL_INVOICE_PRODUCT_NAME, "VENSIS GENEL FATURA", "VENSIS GENEL"];
+  const found = new Map();
+
+  for (const term of terms) {
+    const qs = new URLSearchParams({ "page[size]": "25", "filter[name]": term });
+    const payload = await parasutRequest(accessToken, `/v4/${companyId}/products?${qs}`);
+    for (const product of Array.isArray(payload?.data) ? payload.data : []) {
+      found.set(String(product.id), product);
+    }
+  }
+
+  const exact = [...found.values()].find(
+    (product) => normalizeSearchText(product?.attributes?.name) === wanted,
+  );
+
+  if (!exact) {
+    const err = new Error(`Paraşüt'te \"${GENERAL_INVOICE_PRODUCT_NAME}\" ürünü bulunamadı.`);
+    err.status = 409;
+    throw err;
+  }
+
+  const productId = String(exact.id);
+  await saveIntegration({
+    generalInvoiceProductId: productId,
+    generalInvoiceProductName: exact?.attributes?.name || GENERAL_INVOICE_PRODUCT_NAME,
+  });
+  return productId;
+}
+
+function normalizeCurrency(value) {
+  const currency = String(value || "TRL").trim().toUpperCase();
+  return currency === "TRY" ? "TRL" : currency;
+}
+
+function validateInvoiceLines(lines) {
+  if (!Array.isArray(lines) || !lines.length) return "En az bir fatura kalemi zorunlu.";
+  for (const line of lines) {
+    if (!String(line?.description || "").trim()) return "Her fatura kaleminde gerçek ürün/hizmet açıklaması zorunlu.";
+    if (!(Number(line?.quantity) > 0)) return "Her fatura kaleminde miktar 0'dan büyük olmalı.";
+    if (!(Number(line?.unit_price) >= 0)) return "Her fatura kaleminde birim fiyat 0 veya daha büyük olmalı.";
+  }
+  return null;
 }
 
 function findCompanyCandidates(payload) {
@@ -400,7 +330,8 @@ exports.parasutBridge = onRequest(
           contactsIndexed: Boolean(index && String(index.companyId) === String(integration.companyId) && Array.isArray(index.contacts) && index.contacts.length),
           contactsIndexCount: index?.count || 0,
           contactsIndexAutoRefresh: true,
-          productsSmartSearch: true,
+          generalInvoiceProductConfigured: Boolean(integration.generalInvoiceProductId),
+          generalInvoiceProductName: integration.generalInvoiceProductName || GENERAL_INVOICE_PRODUCT_NAME,
         });
       }
 
@@ -414,7 +345,7 @@ exports.parasutBridge = onRequest(
         if (companies.length && !companies.some((company) => String(company.id) === companyId)) {
           return res.status(400).json({ error: "Bu company_id kayıtlı Paraşüt şirketleri arasında bulunamadı." });
         }
-        await saveIntegration({ companyId });
+        await saveIntegration({ companyId, generalInvoiceProductId: null, generalInvoiceProductName: null });
         return res.json({ ok: true, companyId });
       }
 
@@ -438,6 +369,20 @@ exports.parasutBridge = onRequest(
           let matches = searchContactsInIndex(index.contacts || [], searchName);
           if (taxNumber) matches = matches.filter((c) => String(c?.attributes?.tax_number || "") === taxNumber);
           if (email) matches = matches.filter((c) => String(c?.attributes?.email || "").toLowerCase() === email.toLowerCase());
+
+          let liveDetail = false;
+          if (matches.length === 1) {
+            try {
+              const live = await parasutRequest(accessToken, `/v4/${companyId}/contacts/${matches[0].id}`);
+              if (live?.data) {
+                matches = [live.data];
+                liveDetail = true;
+              }
+            } catch (error) {
+              console.warn("Cari detay yenileme başarısız, indeks kaydı kullanılıyor.", error.message);
+            }
+          }
+
           return res.json({
             data: matches,
             meta: {
@@ -445,6 +390,7 @@ exports.parasutBridge = onRequest(
               auto_indexed: Boolean(index.rebuilt),
               indexed_contacts: index.count || index.contacts?.length || 0,
               index_truncated: Boolean(index.truncated),
+              live_detail: liveDetail,
             },
           });
         }
@@ -456,11 +402,9 @@ exports.parasutBridge = onRequest(
       }
 
       if (req.method === "GET" && req.path === "/products") {
-        const name = String(req.query.name || "").trim();
-        const code = String(req.query.code || "").trim();
-        if (name || code) return res.json(await smartProductSearch(accessToken, companyId, name, code));
-
         const qs = new URLSearchParams({ "page[size]": "25" });
+        if (req.query.name) qs.set("filter[name]", String(req.query.name));
+        if (req.query.code) qs.set("filter[code]", String(req.query.code));
         return res.json(await parasutRequest(accessToken, `/v4/${companyId}/products?${qs}`));
       }
 
@@ -484,10 +428,31 @@ exports.parasutBridge = onRequest(
       }
 
       if (req.method === "POST" && req.path === "/sales-invoices") {
-        const { contact_id, issue_date, due_date, description, currency = "TRL", lines = [] } = req.body || {};
-        if (!contact_id || !issue_date || !Array.isArray(lines) || !lines.length) {
-          return res.status(400).json({ error: "contact_id, issue_date ve en az bir fatura kalemi zorunlu." });
+        const {
+          contact_id,
+          issue_date,
+          due_date,
+          description,
+          currency: requestedCurrency = "TRL",
+          exchange_rate,
+          lines = [],
+        } = req.body || {};
+
+        if (!contact_id || !issue_date) {
+          return res.status(400).json({ error: "contact_id ve issue_date zorunlu." });
         }
+
+        const lineError = validateInvoiceLines(lines);
+        if (lineError) return res.status(400).json({ error: lineError });
+
+        const currency = normalizeCurrency(requestedCurrency);
+        const parsedExchangeRate = Number(exchange_rate);
+        if (currency !== "TRL" && !(parsedExchangeRate > 0)) {
+          return res.status(400).json({ error: "TRL dışındaki faturalar için exchange_rate zorunlu ve 0'dan büyük olmalı." });
+        }
+
+        const generalProductId = await resolveGeneralInvoiceProduct(accessToken, companyId, integration);
+
         const body = {
           data: {
             type: "sales_invoices",
@@ -497,7 +462,7 @@ exports.parasutBridge = onRequest(
               issue_date,
               due_date: due_date || issue_date,
               currency,
-              exchange_rate: 1,
+              exchange_rate: currency === "TRL" ? 1 : parsedExchangeRate,
               withholding_rate: 0,
               invoice_discount_type: "percentage",
               invoice_discount: 0,
@@ -514,22 +479,32 @@ exports.parasutBridge = onRequest(
                     vat_withholding_rate: 0,
                     discount_type: "percentage",
                     discount_value: Number(line.discount_value || 0),
-                    description: line.description || "",
+                    description: String(line.description).trim(),
                   },
-                  relationships: { product: { data: { id: String(line.product_id), type: "products" } } },
+                  relationships: {
+                    product: { data: { id: generalProductId, type: "products" } },
+                  },
                 })),
               },
             },
           },
         };
-        const created = await parasutRequest(accessToken, `/v4/${companyId}/sales_invoices?include=contact,details,details.product`, { method: "POST", body });
+
+        const created = await parasutRequest(
+          accessToken,
+          `/v4/${companyId}/sales_invoices?include=contact,details,details.product`,
+          { method: "POST", body },
+        );
         return res.status(201).json(created);
       }
 
       return res.status(404).json({ error: "Endpoint bulunamadı." });
     } catch (error) {
       console.error(error);
-      return res.status(error.status || 500).json({ error: error.message || "Köprü hatası", details: error.details || undefined });
+      return res.status(error.status || 500).json({
+        error: error.message || "Köprü hatası",
+        details: error.details || undefined,
+      });
     }
-  }
+  },
 );
