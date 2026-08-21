@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Vensis Paraşüt Bridge
-  version: 1.2.0
+  version: 1.2.1
   description: Secure bridge for reading Vensis Paraşüt data and creating sales invoices after user confirmation.
 servers:
   - url: https://europe-west1-metin-finans.cloudfunctions.net/parasutBridge
@@ -73,7 +73,7 @@ paths:
     post:
       operationId: createSalesInvoice
       summary: Create a sales invoice in Paraşüt
-      description: Resolve the exact customer with searchContacts. Do not search the Paraşüt product catalog for invoice creation. The bridge automatically uses the fixed VENSIS GENEL FATURA KALEMİ product. Put the real sold product or service text in each line description. Confirm all financial values and obtain explicit user approval before calling this action.
+      description: Resolve the customer first. The bridge uses VENSIS GENEL FATURA KALEMİ automatically. Put the real product or service in line descriptions. Call only after explicit user approval.
       requestBody:
         required: true
         content:
