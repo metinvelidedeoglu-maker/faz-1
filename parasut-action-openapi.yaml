@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Vensis Paraşüt Bridge
-  version: 1.1.1
+  version: 1.2.0
   description: Secure bridge for reading Vensis Paraşüt data and creating sales invoices after user confirmation.
 servers:
   - url: https://europe-west1-metin-finans.cloudfunctions.net/parasutBridge
@@ -41,22 +41,6 @@ paths:
       responses:
         '200':
           description: Matching contacts
-  /products:
-    get:
-      operationId: searchProducts
-      summary: Search Paraşüt products
-      parameters:
-        - in: query
-          name: name
-          schema:
-            type: string
-        - in: query
-          name: code
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Matching products
   /sales-invoices:
     get:
       operationId: listSalesInvoices
@@ -89,7 +73,7 @@ paths:
     post:
       operationId: createSalesInvoice
       summary: Create a sales invoice in Paraşüt
-      description: First resolve the exact customer and product IDs with searchContacts and searchProducts. Confirm all financial values with the user before calling this action.
+      description: Resolve the exact customer with searchContacts. Do not search the Paraşüt product catalog for invoice creation. The bridge automatically uses the fixed VENSIS GENEL FATURA KALEMİ product. Put the real sold product or service text in each line description. Confirm all financial values and obtain explicit user approval before calling this action.
       requestBody:
         required: true
         content:
@@ -114,18 +98,25 @@ paths:
                 currency:
                   type: string
                   default: TRL
+                  description: Use TRL for Turkish Lira. For non-TRL invoices exchange_rate must also be supplied.
+                exchange_rate:
+                  type: number
+                  exclusiveMinimum: 0
+                  description: Required when currency is not TRL. Use the user-confirmed exchange rate; never guess it.
                 lines:
                   type: array
                   minItems: 1
                   items:
                     type: object
                     required:
-                      - product_id
+                      - description
                       - quantity
                       - unit_price
                     properties:
-                      product_id:
+                      description:
                         type: string
+                        minLength: 1
+                        description: Real product, model, service or invoice-line text to show on the invoice.
                       quantity:
                         type: number
                         exclusiveMinimum: 0
@@ -139,8 +130,6 @@ paths:
                         type: number
                         minimum: 0
                         default: 0
-                      description:
-                        type: string
       responses:
         '201':
           description: Created sales invoice
