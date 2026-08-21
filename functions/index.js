@@ -8,6 +8,8 @@ const bridgeApiKey = defineSecret("PARASUT_BRIDGE_API_KEY");
 
 const PARASUT_BASE = "https://api.parasut.com";
 const REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob";
+const CONTACT_INDEX_DOC = "integrations/parasutContactsIndex";
+const MAX_CONTACT_PAGES = 40;
 
 let cachedDb = null;
 let cachedFieldValue = null;
@@ -94,6 +96,107 @@ async function saveIntegration(data) {
   }, { merge: true });
 }
 
+function normalizeSearchText(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ı/g, "i")
+    .replace(/ğ/g, "g")
+    .replace(/ü/g, "u")
+    .replace(/ş/g, "s")
+    .replace(/ö/g, "o")
+    .replace(/ç/g, "c")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function compactContact(contact) {
+  const a = contact?.attributes || {};
+  return {
+    id: String(contact?.id || ""),
+    type: contact?.type || "contacts",
+    attributes: {
+      name: a.name || "",
+      email: a.email || null,
+      tax_number: a.tax_number || null,
+      tax_office: a.tax_office || null,
+      city: a.city || null,
+      district: a.district || null,
+      address: a.address || null,
+      phone: a.phone || null,
+      account_type: a.account_type || null,
+      balance: a.balance ?? null,
+    },
+  };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function rebuildContactsIndex(accessToken, companyId) {
+  const contacts = [];
+  let pages = 0;
+  let truncated = false;
+
+  for (let page = 1; page <= MAX_CONTACT_PAGES; page += 1) {
+    const qs = new URLSearchParams({
+      "page[size]": "25",
+      "page[number]": String(page),
+      sort: "name",
+    });
+    const payload = await parasutRequest(accessToken, `/v4/${companyId}/contacts?${qs}`);
+    const rows = Array.isArray(payload?.data) ? payload.data : [];
+    contacts.push(...rows.map(compactContact));
+    pages = page;
+    if (rows.length < 25) break;
+    if (page === MAX_CONTACT_PAGES) truncated = true;
+    await sleep(1050);
+  }
+
+  const { db, FieldValue } = getAdmin();
+  await db.doc(CONTACT_INDEX_DOC).set({
+    companyId: String(companyId),
+    contacts,
+    count: contacts.length,
+    pages,
+    truncated,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  return { ok: true, count: contacts.length, pages, truncated };
+}
+
+async function getContactsIndex() {
+  const { db } = getAdmin();
+  const snap = await db.doc(CONTACT_INDEX_DOC).get();
+  return snap.exists ? snap.data() : null;
+}
+
+function searchContactsInIndex(contacts, searchName) {
+  const needle = normalizeSearchText(searchName);
+  if (!needle) return contacts.slice(0, 25);
+  const tokens = needle.split(" ").filter(Boolean);
+
+  return contacts
+    .map((contact) => {
+      const haystack = normalizeSearchText(contact?.attributes?.name);
+      let score = null;
+      if (haystack === needle) score = 0;
+      else if (haystack.startsWith(needle)) score = 1;
+      else if (haystack.includes(needle)) score = 2;
+      else if (tokens.every((token) => haystack.includes(token))) score = 3;
+      return score == null ? null : { contact, score, haystack };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.score - b.score || a.haystack.length - b.haystack.length || a.haystack.localeCompare(b.haystack, "tr"))
+    .slice(0, 25)
+    .map((item) => item.contact);
+}
+
 async function refreshAccessToken() {
   const integration = await getIntegration();
   if (!integration.refreshToken) throw new Error("Paraşüt bağlantısı henüz başlatılmamış.");
@@ -155,11 +258,14 @@ exports.parasutBridge = onRequest(
 
       if (req.method === "GET" && (req.path === "/" || req.path === "/health")) {
         const integration = await getIntegration();
+        const index = await getContactsIndex();
         return res.json({
           ok: true,
           connected: Boolean(integration.refreshToken),
           companyId: integration.companyId || null,
           companies: integration.companies || [],
+          contactsIndexed: Boolean(index && String(index.companyId) === String(integration.companyId)),
+          contactsIndexCount: index?.count || 0,
         });
       }
 
@@ -184,11 +290,36 @@ exports.parasutBridge = onRequest(
       const companyId = integration.companyId;
       const accessToken = await refreshAccessToken();
 
+      if (req.method === "POST" && req.path === "/reindex-contacts") {
+        return res.json(await rebuildContactsIndex(accessToken, companyId));
+      }
+
       if (req.method === "GET" && req.path === "/contacts") {
+        const searchName = String(req.query.name || "").trim();
+        const taxNumber = String(req.query.tax_number || "").trim();
+        const email = String(req.query.email || "").trim();
+
+        if (searchName) {
+          const index = await getContactsIndex();
+          if (index && String(index.companyId) === String(companyId) && Array.isArray(index.contacts)) {
+            let matches = searchContactsInIndex(index.contacts, searchName);
+            if (taxNumber) matches = matches.filter((c) => String(c?.attributes?.tax_number || "") === taxNumber);
+            if (email) matches = matches.filter((c) => String(c?.attributes?.email || "").toLowerCase() === email.toLowerCase());
+            return res.json({
+              data: matches,
+              meta: {
+                local_search: true,
+                indexed_contacts: index.count || index.contacts.length,
+                index_truncated: Boolean(index.truncated),
+              },
+            });
+          }
+        }
+
         const qs = new URLSearchParams({ "page[size]": "25" });
-        if (req.query.name) qs.set("filter[name]", String(req.query.name));
-        if (req.query.tax_number) qs.set("filter[tax_number]", String(req.query.tax_number));
-        if (req.query.email) qs.set("filter[email]", String(req.query.email));
+        if (searchName) qs.set("filter[name]", searchName);
+        if (taxNumber) qs.set("filter[tax_number]", taxNumber);
+        if (email) qs.set("filter[email]", email);
         return res.json(await parasutRequest(accessToken, `/v4/${companyId}/contacts?${qs}`));
       }
 
