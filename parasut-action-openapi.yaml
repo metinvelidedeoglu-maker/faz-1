@@ -1,11 +1,12 @@
 openapi: 3.1.0
 info:
   title: Vensis Paraşüt Bridge
-  version: 1.1.0
+  version: 1.1.1
   description: Secure bridge for reading Vensis Paraşüt data and creating sales invoices after user confirmation.
 servers:
   - url: https://europe-west1-metin-finans.cloudfunctions.net/parasutBridge
 components:
+  schemas: {}
   securitySchemes:
     bearerAuth:
       type: http
@@ -27,15 +28,19 @@ paths:
       parameters:
         - in: query
           name: name
-          schema: { type: string }
+          schema:
+            type: string
         - in: query
           name: tax_number
-          schema: { type: string }
+          schema:
+            type: string
         - in: query
           name: email
-          schema: { type: string }
+          schema:
+            type: string
       responses:
-        '200': { description: Matching contacts }
+        '200':
+          description: Matching contacts
   /products:
     get:
       operationId: searchProducts
@@ -43,12 +48,15 @@ paths:
       parameters:
         - in: query
           name: name
-          schema: { type: string }
+          schema:
+            type: string
         - in: query
           name: code
-          schema: { type: string }
+          schema:
+            type: string
       responses:
-        '200': { description: Matching products }
+        '200':
+          description: Matching products
   /sales-invoices:
     get:
       operationId: listSalesInvoices
@@ -57,17 +65,27 @@ paths:
         - in: query
           name: issue_date
           description: Paraşüt issue date filter
-          schema: { type: string }
+          schema:
+            type: string
         - in: query
           name: payment_status
           schema:
             type: string
-            enum: [overdue, not_due, unscheduled, paid]
+            enum:
+              - overdue
+              - not_due
+              - unscheduled
+              - paid
         - in: query
           name: page_size
-          schema: { type: integer, minimum: 1, maximum: 25, default: 15 }
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 25
+            default: 15
       responses:
-        '200': { description: Sales invoices }
+        '200':
+          description: Sales invoices
     post:
       operationId: createSalesInvoice
       summary: Create a sales invoice in Paraşüt
@@ -78,28 +96,54 @@ paths:
           application/json:
             schema:
               type: object
-              required: [contact_id, issue_date, lines]
+              required:
+                - contact_id
+                - issue_date
+                - lines
               properties:
-                contact_id: { type: string }
-                issue_date: { type: string, format: date }
-                due_date: { type: string, format: date }
-                description: { type: string }
-                currency: { type: string, default: TRL }
+                contact_id:
+                  type: string
+                issue_date:
+                  type: string
+                  format: date
+                due_date:
+                  type: string
+                  format: date
+                description:
+                  type: string
+                currency:
+                  type: string
+                  default: TRL
                 lines:
                   type: array
                   minItems: 1
                   items:
                     type: object
-                    required: [product_id, quantity, unit_price]
+                    required:
+                      - product_id
+                      - quantity
+                      - unit_price
                     properties:
-                      product_id: { type: string }
-                      quantity: { type: number, exclusiveMinimum: 0 }
-                      unit_price: { type: number, minimum: 0 }
-                      vat_rate: { type: number, default: 20 }
-                      discount_value: { type: number, minimum: 0, default: 0 }
-                      description: { type: string }
+                      product_id:
+                        type: string
+                      quantity:
+                        type: number
+                        exclusiveMinimum: 0
+                      unit_price:
+                        type: number
+                        minimum: 0
+                      vat_rate:
+                        type: number
+                        default: 20
+                      discount_value:
+                        type: number
+                        minimum: 0
+                        default: 0
+                      description:
+                        type: string
       responses:
-        '201': { description: Created sales invoice }
+        '201':
+          description: Created sales invoice
   /purchase-bills:
     get:
       operationId: listPurchaseBills
@@ -107,9 +151,15 @@ paths:
       parameters:
         - in: query
           name: issue_date
-          schema: { type: string }
+          schema:
+            type: string
         - in: query
           name: page_size
-          schema: { type: integer, minimum: 1, maximum: 25, default: 15 }
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 25
+            default: 15
       responses:
-        '200': { description: Purchase bills }
+        '200':
+          description: Purchase bills
