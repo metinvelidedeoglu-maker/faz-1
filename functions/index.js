@@ -211,6 +211,125 @@ function searchContactsInIndex(contacts, searchName) {
     .map((item) => item.contact);
 }
 
+function compactProduct(product) {
+  const a = product?.attributes || {};
+  return {
+    id: String(product?.id || ""),
+    type: product?.type || "products",
+    attributes: {
+      name: a.name || "",
+      code: a.code || null,
+      vat_rate: a.vat_rate ?? null,
+      sales_excise_duty: a.sales_excise_duty ?? null,
+      sales_excise_duty_type: a.sales_excise_duty_type || null,
+      purchase_excise_duty: a.purchase_excise_duty ?? null,
+      purchase_excise_duty_type: a.purchase_excise_duty_type || null,
+      unit: a.unit || null,
+      sales_price: a.sales_price ?? null,
+      purchase_price: a.purchase_price ?? null,
+      currency: a.currency || null,
+      inventory_tracking: a.inventory_tracking ?? null,
+      initial_stock_count: a.initial_stock_count ?? null,
+    },
+  };
+}
+
+function productMatchScore(product, name, code) {
+  const productName = normalizeSearchText(product?.attributes?.name);
+  const productCode = normalizeSearchText(product?.attributes?.code);
+  const needle = normalizeSearchText(name);
+  const wantedCode = normalizeSearchText(code);
+
+  if (wantedCode && productCode === wantedCode) return 0;
+  if (!needle) return wantedCode && productCode.includes(wantedCode) ? 1 : null;
+
+  const tokens = needle.split(" ").filter(Boolean);
+  if (productName === needle) return 0;
+  if (productName.startsWith(needle)) return 1;
+  if (productName.includes(needle)) return 2;
+  if (tokens.every((token) => productName.includes(token))) return 3;
+  if (tokens.length > 1 && tokens.filter((token) => productName.includes(token)).length >= Math.ceil(tokens.length * 0.7)) return 4;
+  if (wantedCode && productCode.includes(wantedCode)) return 1;
+  return null;
+}
+
+function buildProductSearchTerms(name) {
+  const raw = String(name || "").trim();
+  if (!raw) return [];
+  const normalized = normalizeSearchText(raw);
+  const tokens = normalized.split(" ").filter((token) => token.length >= 2);
+  const terms = [raw, normalized];
+
+  if (tokens.length >= 2) {
+    terms.push(`${tokens[0]} ${tokens[1]}`);
+    terms.push(`${tokens[tokens.length - 2]} ${tokens[tokens.length - 1]}`);
+  }
+
+  const informative = [...tokens].sort((a, b) => b.length - a.length);
+  terms.push(...informative.slice(0, 3));
+
+  const seen = new Set();
+  return terms
+    .map((term) => String(term || "").trim())
+    .filter((term) => {
+      const key = normalizeSearchText(term);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 6);
+}
+
+async function smartProductSearch(accessToken, companyId, name, code) {
+  const productMap = new Map();
+  const terms = buildProductSearchTerms(name);
+  let apiCalls = 0;
+
+  if (code) {
+    const qs = new URLSearchParams({ "page[size]": "25", "filter[code]": String(code) });
+    const payload = await parasutRequest(accessToken, `/v4/${companyId}/products?${qs}`);
+    apiCalls += 1;
+    for (const row of Array.isArray(payload?.data) ? payload.data : []) {
+      productMap.set(String(row.id), row);
+    }
+  }
+
+  for (const term of terms) {
+    const qs = new URLSearchParams({ "page[size]": "25", "filter[name]": term });
+    const payload = await parasutRequest(accessToken, `/v4/${companyId}/products?${qs}`);
+    apiCalls += 1;
+    for (const row of Array.isArray(payload?.data) ? payload.data : []) {
+      productMap.set(String(row.id), row);
+    }
+    if (productMap.size >= 75) break;
+  }
+
+  const ranked = [...productMap.values()]
+    .map((product) => {
+      const score = productMatchScore(product, name, code);
+      return score == null ? null : { product, score };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score;
+      const aName = normalizeSearchText(a.product?.attributes?.name);
+      const bName = normalizeSearchText(b.product?.attributes?.name);
+      return aName.length - bName.length || aName.localeCompare(bName, "tr");
+    })
+    .slice(0, 25)
+    .map(({ product }) => compactProduct(product));
+
+  return {
+    data: ranked,
+    meta: {
+      smart_search: true,
+      api_calls: apiCalls,
+      candidates_checked: productMap.size,
+      search_terms: terms,
+    },
+  };
+}
+
 async function refreshAccessToken() {
   const integration = await getIntegration();
   if (!integration.refreshToken) throw new Error("Paraşüt bağlantısı henüz başlatılmamış.");
@@ -281,6 +400,7 @@ exports.parasutBridge = onRequest(
           contactsIndexed: Boolean(index && String(index.companyId) === String(integration.companyId) && Array.isArray(index.contacts) && index.contacts.length),
           contactsIndexCount: index?.count || 0,
           contactsIndexAutoRefresh: true,
+          productsSmartSearch: true,
         });
       }
 
@@ -336,9 +456,11 @@ exports.parasutBridge = onRequest(
       }
 
       if (req.method === "GET" && req.path === "/products") {
+        const name = String(req.query.name || "").trim();
+        const code = String(req.query.code || "").trim();
+        if (name || code) return res.json(await smartProductSearch(accessToken, companyId, name, code));
+
         const qs = new URLSearchParams({ "page[size]": "25" });
-        if (req.query.name) qs.set("filter[name]", String(req.query.name));
-        if (req.query.code) qs.set("filter[code]", String(req.query.code));
         return res.json(await parasutRequest(accessToken, `/v4/${companyId}/products?${qs}`));
       }
 
