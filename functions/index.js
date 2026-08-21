@@ -23,7 +23,12 @@ function getAdmin() {
 }
 
 function assertBridgeKey(req) {
-  const supplied = String(req.get("x-api-key") || "");
+  const headerKey = String(req.get("x-api-key") || "");
+  const authorization = String(req.get("authorization") || "");
+  const bearerKey = authorization.toLowerCase().startsWith("bearer ")
+    ? authorization.slice(7).trim()
+    : "";
+  const supplied = headerKey || bearerKey;
   if (!supplied || supplied !== bridgeApiKey.value()) {
     const err = new Error("Yetkisiz istek.");
     err.status = 401;
