@@ -150,11 +150,28 @@ exports.parasutBridge = onRequest(
 
       if (req.method === "GET" && (req.path === "/" || req.path === "/health")) {
         const integration = await getIntegration();
-        return res.json({ ok: true, connected: Boolean(integration.refreshToken), companyId: integration.companyId || null });
+        return res.json({
+          ok: true,
+          connected: Boolean(integration.refreshToken),
+          companyId: integration.companyId || null,
+          companies: integration.companies || [],
+        });
       }
 
       if (req.method === "POST" && req.path === "/bootstrap") {
         return res.json(await bootstrapParasut());
+      }
+
+      if (req.method === "POST" && req.path === "/select-company") {
+        const integration = await getIntegration();
+        const companyId = String(req.body?.company_id || "");
+        if (!companyId) return res.status(400).json({ error: "company_id zorunlu." });
+        const companies = Array.isArray(integration.companies) ? integration.companies : [];
+        if (companies.length && !companies.some((company) => String(company.id) === companyId)) {
+          return res.status(400).json({ error: "Bu company_id kayıtlı Paraşüt şirketleri arasında bulunamadı." });
+        }
+        await saveIntegration({ companyId });
+        return res.json({ ok: true, companyId });
       }
 
       const integration = await getIntegration();
